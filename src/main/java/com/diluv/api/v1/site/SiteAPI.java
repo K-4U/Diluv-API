@@ -11,6 +11,13 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
+import com.diluv.api.data.site.DataSiteProjectFileDisplay;
+import com.diluv.api.data.site.DataSiteProjectFilesPage;
+import com.diluv.api.utils.query.ProjectFileQuery;
+import com.diluv.confluencia.database.record.GameVersionRecord;
+import com.diluv.confluencia.database.record.ProjectFileRecord;
+import com.diluv.confluencia.database.sort.ProjectFileSort;
+
 import org.jboss.resteasy.annotations.GZIP;
 import org.jboss.resteasy.annotations.Query;
 import org.jboss.resteasy.annotations.cache.Cache;
@@ -166,5 +173,52 @@ public class SiteAPI {
 
         final List<DataProjectContributor> projectAuthors = records.stream().map(DataProjectContributor::new).collect(Collectors.toList());
         return ResponseUtil.successResponse(new DataProject(projectRecord, tags, projectAuthors, projectLinks));
+    }
+
+    @GET
+    @Path("/games/{gameSlug}/{projectTypeSlug}/{projectSlug}/files")
+    public Response getProjectFiles (@HeaderParam("Authorization") Token token, @PathParam("gameSlug") String gameSlug, @PathParam("projectTypeSlug") String projectTypeSlug, @PathParam("projectSlug") String projectSlug, @Query ProjectFileQuery query) {
+
+        long page = query.getPage();
+        int limit = query.getLimit();
+        Sort sort = query.getSort(ProjectFileSort.NEW);
+        String version = query.getVersions();
+
+        final ProjectRecord projectRecord = DATABASE.projectDAO.findOneProjectByGameSlugAndProjectTypeSlugAndProjectSlug(gameSlug, projectTypeSlug, projectSlug);
+        if (projectRecord == null) {
+
+            if (DATABASE.gameDAO.findOneBySlug(gameSlug) == null) {
+                return ErrorMessage.NOT_FOUND_GAME.respond();
+            }
+
+            if (DATABASE.projectDAO.findOneProjectTypeByGameSlugAndProjectTypeSlug(gameSlug, projectTypeSlug) == null) {
+                return ErrorMessage.NOT_FOUND_PROJECT_TYPE.respond();
+            }
+
+            return ErrorMessage.NOT_FOUND_PROJECT.respond();
+        }
+
+        final List<ProjectAuthorRecord> records = DATABASE.projectDAO.findAllProjectAuthorsByProjectId(projectRecord.getId());
+
+        boolean authorized = token != null && ProjectPermissions.hasPermission(projectRecord, token, ProjectPermissions.FILE_UPLOAD);
+        final List<ProjectFileRecord> projectFileRecords;
+
+        if (version == null) {
+            projectFileRecords = DATABASE.fileDAO.findAllByProjectId(projectRecord.getId(), authorized, page, limit, sort);
+        }
+        else {
+            projectFileRecords = DATABASE.fileDAO.findAllByProjectIdWhereVersion(projectRecord.getId(), authorized, page, limit, sort, version);
+        }
+
+        final List<DataSiteProjectFileDisplay> projectFiles = projectFileRecords.stream().map(record -> {
+            final List<GameVersionRecord> gameVersionRecords = DATABASE.fileDAO.findAllGameVersionsById(projectRecord.getId());
+            List<DataGameVersion> gameVersions = gameVersionRecords.stream().map(DataGameVersion::new).collect(Collectors.toList());
+            return record.isReleased() ?
+                new DataSiteProjectFileDisplay(record, gameVersions, gameSlug, projectTypeSlug, projectSlug) :
+                new DataSiteProjectFileDisplay(record, gameVersions, gameSlug, projectTypeSlug, projectSlug);
+        }).collect(Collectors.toList());
+        List<DataTag> tags = DATABASE.projectDAO.findAllTagsByProjectId(projectRecord.getId()).stream().map(DataTag::new).collect(Collectors.toList());
+        final List<DataProjectContributor> projectAuthors = records.stream().map(DataProjectContributor::new).collect(Collectors.toList());
+        return ResponseUtil.successResponse(new DataSiteProjectFilesPage(new DataBaseProject(projectRecord, tags, projectAuthors),projectFiles));
     }
 }
