@@ -14,9 +14,11 @@ import javax.ws.rs.core.Response;
 import com.diluv.api.Database;
 import com.diluv.api.data.site.DataSiteProjectFileDisplay;
 import com.diluv.api.data.site.DataSiteProjectFilesPage;
+import com.diluv.api.utils.auth.JWTUtil;
 import com.diluv.api.utils.query.ProjectFileQuery;
 import com.diluv.confluencia.database.record.GameVersionRecord;
 import com.diluv.confluencia.database.record.ProjectFileRecord;
+import com.diluv.confluencia.database.record.UserRecord;
 import com.diluv.confluencia.database.sort.ProjectFileSort;
 
 import org.jboss.resteasy.annotations.GZIP;
@@ -214,5 +216,33 @@ public class SiteAPI {
         List<DataTag> tags = DATABASE.projectDAO.findAllTagsByProjectId(projectRecord.getId()).stream().map(DataTag::new).collect(Collectors.toList());
         final List<DataProjectContributor> projectAuthors = records.stream().map(DataProjectContributor::new).collect(Collectors.toList());
         return ResponseUtil.successResponse(new DataSiteProjectFilesPage(new DataBaseProject(projectRecord, tags, projectAuthors), projectFiles));
+    }
+
+    @Cache(maxAge = 300, mustRevalidate = true)
+    @GET
+    @Path("/author/{username}")
+    public Response getUser (@PathParam("username") String username, @HeaderParam("Authorization") String auth) {
+
+        final UserRecord userRecord = DATABASE.userDAO.findOneByUsername(username);
+
+        if (userRecord == null) {
+
+            return ErrorMessage.NOT_FOUND_USER.respond();
+        }
+
+        if (auth != null) {
+
+            final Token token = JWTUtil.getToken(auth);
+
+            if (token != null) {
+                final UserRecord tokenUser = DATABASE.userDAO.findOneByUserId(token.getUserId());
+
+                if (tokenUser.getUsername().equalsIgnoreCase(username)) {
+                    return ResponseUtil.successResponse(new DataAuthorizedUser(userRecord));
+                }
+            }
+        }
+
+        return ResponseUtil.successResponse(new DataUser(userRecord));
     }
 }
