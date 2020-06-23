@@ -11,11 +11,14 @@ import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 import javax.ws.rs.core.Response;
 
+import com.diluv.api.Database;
 import com.diluv.api.data.site.DataSiteProjectFileDisplay;
 import com.diluv.api.data.site.DataSiteProjectFilesPage;
+import com.diluv.api.utils.auth.JWTUtil;
 import com.diluv.api.utils.query.ProjectFileQuery;
 import com.diluv.confluencia.database.record.GameVersionRecord;
 import com.diluv.confluencia.database.record.ProjectFileRecord;
+import com.diluv.confluencia.database.record.UserRecord;
 import com.diluv.confluencia.database.sort.ProjectFileSort;
 
 import org.jboss.resteasy.annotations.GZIP;
@@ -58,18 +61,11 @@ public class SiteAPI {
         final List<GameRecord> gameRecords = DATABASE.gameDAO.findFeaturedGames();
         final List<DataSiteGame> games = gameRecords.stream().map(DataSiteGame::new).collect(Collectors.toList());
 
-        final List<ProjectRecord> projectRecords = DATABASE.projectDAO.findFeaturedProjects();
-
-        final List<DataBaseProject> projects = projectRecords.stream().map(projectRecord -> {
-            final List<TagRecord> tagRecords = DATABASE.projectDAO.findAllTagsByProjectId(projectRecord.getId());
-            List<DataTag> tags = tagRecords.stream().map(DataTag::new).collect(Collectors.toList());
-            return new DataBaseProject(projectRecord, tags);
-        }).collect(Collectors.toList());
-
         final long projectCount = DATABASE.projectDAO.countAll();
         final long userCount = DATABASE.userDAO.countAll();
-
-        return ResponseUtil.successResponse(new DataSiteIndex(games, projects, projectCount, userCount));
+        final long gameCount = DATABASE.gameDAO.countAll("");
+        final long projectTypeCount = 0;
+        return ResponseUtil.successResponse(new DataSiteIndex(games, projectCount, userCount, gameCount, projectTypeCount));
     }
 
     @Cache(maxAge = 300, mustRevalidate = true)
@@ -115,7 +111,7 @@ public class SiteAPI {
         final String versions = query.getVersions();
         final String[] tags = query.getTags();
 
-        final List<ProjectRecord> projectRecords = DATABASE.projectDAO.findAllByGameAndProjectType(gameSlug, projectTypeSlug, search, page, limit, sort,versions,tags);
+        final List<ProjectRecord> projectRecords = DATABASE.projectDAO.findAllByGameAndProjectType(gameSlug, projectTypeSlug, search, page, limit, sort, versions, tags);
 
         GameRecord game = DATABASE.gameDAO.findOneBySlug(gameSlug);
         if (projectRecords.isEmpty()) {
@@ -136,7 +132,7 @@ public class SiteAPI {
             return new DataBaseProject(projectRecord, dataTags);
         }).collect(Collectors.toList());
 
-        final  List<DataBaseProjectType> types = DATABASE.projectDAO.findAllProjectTypesByGameSlug(gameSlug).stream().map(DataBaseProjectType::new).collect(Collectors.toList());
+        final List<DataBaseProjectType> types = DATABASE.projectDAO.findAllProjectTypesByGameSlug(gameSlug).stream().map(DataBaseProjectType::new).collect(Collectors.toList());
         final ProjectTypeRecord currentType = DATABASE.projectDAO.findOneProjectTypeByGameSlugAndProjectTypeSlug(gameSlug, projectTypeSlug, search);
         final List<DataTag> dataTags = DATABASE.projectDAO.findAllTagsByGameSlugAndProjectTypeSlug(gameSlug, projectTypeSlug).stream().map(DataTag::new).collect(Collectors.toList());
 
@@ -219,6 +215,34 @@ public class SiteAPI {
         }).collect(Collectors.toList());
         List<DataTag> tags = DATABASE.projectDAO.findAllTagsByProjectId(projectRecord.getId()).stream().map(DataTag::new).collect(Collectors.toList());
         final List<DataProjectContributor> projectAuthors = records.stream().map(DataProjectContributor::new).collect(Collectors.toList());
-        return ResponseUtil.successResponse(new DataSiteProjectFilesPage(new DataBaseProject(projectRecord, tags, projectAuthors),projectFiles));
+        return ResponseUtil.successResponse(new DataSiteProjectFilesPage(new DataBaseProject(projectRecord, tags, projectAuthors), projectFiles));
+    }
+
+    @Cache(maxAge = 300, mustRevalidate = true)
+    @GET
+    @Path("/author/{username}")
+    public Response getUser (@PathParam("username") String username, @HeaderParam("Authorization") String auth) {
+
+        final UserRecord userRecord = DATABASE.userDAO.findOneByUsername(username);
+
+        if (userRecord == null) {
+
+            return ErrorMessage.NOT_FOUND_USER.respond();
+        }
+
+        if (auth != null) {
+
+            final Token token = JWTUtil.getToken(auth);
+
+            if (token != null) {
+                final UserRecord tokenUser = DATABASE.userDAO.findOneByUserId(token.getUserId());
+
+                if (tokenUser.getUsername().equalsIgnoreCase(username)) {
+                    return ResponseUtil.successResponse(new DataAuthorizedUser(userRecord));
+                }
+            }
+        }
+
+        return ResponseUtil.successResponse(new DataUser(userRecord));
     }
 }
